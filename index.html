@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ジェネラティブ万華鏡</title>
+<style>
+  :root {
+    --ui-bg: rgba(20, 22, 34, 0.72);
+    --ui-border: rgba(255, 255, 255, 0.14);
+    --ui-text: rgba(255, 255, 255, 0.92);
+    --ui-sub: rgba(255, 255, 255, 0.55);
+    --accent: #7ee8fa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: #05060c;
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", sans-serif;
+    color: var(--ui-text);
+    -webkit-user-select: none; user-select: none;
+    touch-action: none;
+  }
+  #stage { position: fixed; inset: 0; display: block; cursor: crosshair; }
+
+  .panel {
+    position: fixed; z-index: 10;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 16px;
+  }
+
+  /* ---- Controls (top-left) ---- */
+  #controls {
+    top: 16px; left: 16px;
+    padding: 14px 16px 16px;
+    width: 236px;
+    display: flex; flex-direction: column; gap: 14px;
+    transition: transform .35s ease, opacity .35s ease;
+  }
+  #controls.hidden { transform: translateX(-118%); opacity: 0; pointer-events: none; }
+
+  .title { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+  .title small { display: block; font-weight: 400; color: var(--ui-sub); font-size: 11px; margin-top: 3px; }
+
+  .row { display: flex; flex-direction: column; gap: 6px; }
+  .row label { font-size: 11px; color: var(--ui-sub); display: flex; justify-content: space-between; }
+  .row label b { color: var(--ui-text); font-weight: 600; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px; border-radius: 4px;
+    background: rgba(255,255,255,0.16); outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--accent); border: 2px solid #05060c; cursor: pointer;
+    box-shadow: 0 0 8px rgba(126,232,250,.6);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--accent); border: 2px solid #05060c; cursor: pointer;
+  }
+
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button {
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    color: var(--ui-text); cursor: pointer;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--ui-border);
+    padding: 9px 8px; border-radius: 10px;
+    transition: background .15s, transform .05s;
+  }
+  button:hover { background: rgba(255,255,255,0.14); }
+  button:active { transform: scale(.96); }
+  button.wide { grid-column: 1 / -1; }
+  button.primary { background: rgba(126,232,250,.18); border-color: rgba(126,232,250,.45); }
+  button.primary:hover { background: rgba(126,232,250,.30); }
+
+  /* ---- Hint (bottom-center) ---- */
+  #hint {
+    bottom: 18px; left: 50%; transform: translateX(-50%);
+    padding: 9px 16px; font-size: 12px; color: var(--ui-sub);
+    display: flex; align-items: center; gap: 10px;
+    transition: opacity .5s ease;
+  }
+  #hint kbd {
+    font-family: inherit; font-size: 11px; color: var(--ui-text);
+    background: rgba(255,255,255,0.08); border: 1px solid var(--ui-border);
+    border-radius: 5px; padding: 1px 6px;
+  }
+  #hint.fade { opacity: 0; }
+
+  /* ---- Toast ---- */
+  #toast {
+    top: 20px; left: 50%; transform: translate(-50%, -20px);
+    padding: 10px 18px; font-size: 13px; font-weight: 600;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s, transform .3s;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="controls" class="panel">
+  <div class="title">ジェネラティブ万華鏡<small>マウス / 指を動かして描く</small></div>
+
+  <div class="row">
+    <label>対称の枚数 <b id="symVal">8</b></label>
+    <input id="sym" type="range" min="2" max="24" step="1" value="8">
+  </div>
+  <div class="row">
+    <label>筆の太さ <b id="sizeVal">6</b></label>
+    <input id="size" type="range" min="1" max="30" step="1" value="6">
+  </div>
+  <div class="row">
+    <label>色の流れる速さ <b id="speedVal">50</b></label>
+    <input id="speed" type="range" min="0" max="100" step="1" value="50">
+  </div>
+  <div class="row">
+    <label>残像（フェード） <b id="fadeVal">なし</b></label>
+    <input id="fade" type="range" min="0" max="100" step="1" value="0">
+  </div>
+
+  <div class="buttons">
+    <button id="mirrorBtn">鏡：ON</button>
+    <button id="autoBtn">自動描画</button>
+    <button id="clearBtn">クリア</button>
+    <button id="hideBtn">パネル隠す</button>
+    <button id="saveBtn" class="wide primary">画像を保存 ⤓</button>
+  </div>
+</div>
+
+<div id="hint" class="panel">
+  ドラッグで描く　·　<kbd>H</kbd> パネル　·　<kbd>Space</kbd> 自動　·　<kbd>C</kbd> 消去　·　<kbd>S</kbd> 保存
+</div>
+
+<div id="toast" class="panel"></div>
+
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  let W = 0, H = 0, cx = 0, cy = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth || document.documentElement.clientWidth;
+    H = window.innerHeight || document.documentElement.clientHeight;
+    if (W === 0 || H === 0) return; // pane not sized yet — wait for ResizeObserver
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = W / 2; cy = H / 2;
+    paintBackground(true);
+  }
+
+  function paintBackground(full) {
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#05060c";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // --- Settings ---
+  const S = {
+    symmetry: 8,
+    size: 6,
+    colorSpeed: 50,
+    fade: 0,
+    mirror: true,
+    hue: Math.random() * 360,
+  };
+
+  // --- UI wiring ---
+  const el = id => document.getElementById(id);
+  const controls = el("controls");
+  const hint = el("hint");
+
+  function bindSlider(id, valId, apply, fmt) {
+    const input = el(id), out = el(valId);
+    const update = () => {
+      const v = parseFloat(input.value);
+      apply(v);
+      out.textContent = fmt ? fmt(v) : v;
+    };
+    input.addEventListener("input", update);
+    update();
+  }
+  bindSlider("sym", "symVal", v => S.symmetry = v);
+  bindSlider("size", "sizeVal", v => S.size = v);
+  bindSlider("speed", "speedVal", v => S.colorSpeed = v);
+  bindSlider("fade", "fadeVal", v => S.fade = v, v => v === 0 ? "なし" : v);
+
+  const mirrorBtn = el("mirrorBtn");
+  mirrorBtn.addEventListener("click", () => {
+    S.mirror = !S.mirror;
+    mirrorBtn.textContent = "鏡：" + (S.mirror ? "ON" : "OFF");
+  });
+
+  el("clearBtn").addEventListener("click", clearCanvas);
+  el("hideBtn").addEventListener("click", togglePanel);
+  el("saveBtn").addEventListener("click", saveImage);
+
+  const autoBtn = el("autoBtn");
+  autoBtn.addEventListener("click", toggleAuto);
+
+  function togglePanel() {
+    controls.classList.toggle("hidden");
+    el("hideBtn").textContent = controls.classList.contains("hidden") ? "パネル出す" : "パネル隠す";
+  }
+
+  function clearCanvas() {
+    paintBackground(true);
+    toast("キャンバスをクリアしました");
+  }
+
+  // --- Toast ---
+  let toastTimer = null;
+  function toast(msg) {
+    const t = el("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
+  }
+
+  // --- Drawing ---
+  let last = null; // last pointer pos in stage coords
+
+  function drawStroke(x, y, px, py) {
+    const dx = x - cx, dy = y - cy;
+    const pdx = px - cx, pdy = py - cy;
+    const speedLen = Math.hypot(x - px, y - py);
+    // velocity tapers the brush a little for a lively line
+    const width = S.size * (0.6 + 1.2 / (1 + speedLen * 0.06));
+
+    const hue = S.hue;
+    const light = 55 + 20 * Math.sin(performance.now() * 0.002);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = `hsla(${hue}, 90%, ${light}%, 0.9)`;
+    ctx.shadowColor = `hsla(${hue}, 95%, 60%, 0.8)`;
+    ctx.shadowBlur = width * 1.4;
+    ctx.lineWidth = width;
+
+    const n = Math.max(2, Math.round(S.symmetry));
+    for (let i = 0; i < n; i++) {
+      const a = (Math.PI * 2 / n) * i;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      // rotate current & previous point
+      const rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
+      const rpx = pdx * cos - pdy * sin, rpy = pdx * sin + pdy * cos;
+
+      segment(cx + rpx, cy + rpy, cx + rx, cy + ry);
+      if (S.mirror) {
+        // mirror across the vertical axis for a true kaleidoscope
+        segment(cx - rpx, cy + rpy, cx - rx, cy + ry);
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function segment(x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // --- Pointer handling ---
+  function pointerPos(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX, y: t.clientY };
+  }
+
+  let drawing = false;
+  function down(e) {
+    if (autoOn) toggleAuto();
+    drawing = true;
+    last = pointerPos(e);
+    hint.classList.add("fade");
+  }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = pointerPos(e);
+    if (last) drawStroke(p.x, p.y, last.x, last.y);
+    last = p;
+  }
+  function up() { drawing = false; last = null; }
+
+  canvas.addEventListener("mousedown", down);
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+  canvas.addEventListener("touchstart", e => { e.preventDefault(); down(e); }, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  window.addEventListener("touchend", up);
+
+  // --- Auto draw (a wandering spirograph-like pen) ---
+  let autoOn = false;
+  let ap = null;
+  function toggleAuto() {
+    autoOn = !autoOn;
+    autoBtn.textContent = autoOn ? "自動停止" : "自動描画";
+    if (autoOn) {
+      const r = Math.min(W, H) * 0.3;
+      ap = { t: Math.random() * 100, prev: null,
+             r1: r * (0.5 + Math.random() * 0.5),
+             r2: r * (0.2 + Math.random() * 0.4),
+             s1: 0.6 + Math.random() * 0.8,
+             s2: 1.5 + Math.random() * 2.5 };
+      hint.classList.add("fade");
+    }
+  }
+
+  function autoStep() {
+    if (!autoOn) return;
+    ap.t += 0.03;
+    const x = cx + Math.cos(ap.t * ap.s1) * ap.r1 + Math.cos(ap.t * ap.s2) * ap.r2;
+    const y = cy + Math.sin(ap.t * ap.s1) * ap.r1 + Math.sin(ap.t * ap.s2) * ap.r2;
+    if (ap.prev) drawStroke(x, y, ap.prev.x, ap.prev.y);
+    ap.prev = { x, y };
+  }
+
+  // --- Main loop: color drift + fade + auto ---
+  function loop() {
+    // hue drift
+    S.hue = (S.hue + S.colorSpeed * 0.02) % 360;
+
+    // optional fade (residual trails)
+    if (S.fade > 0) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = S.fade / 100 * 0.08;
+      ctx.fillStyle = "#05060c";
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+
+    for (let i = 0; i < 3; i++) autoStep(); // smoother auto lines
+    requestAnimationFrame(loop);
+  }
+
+  // --- Save ---
+  function saveImage() {
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    link.download = `kaleidoscope-${stamp}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    toast("画像を保存しました ✔");
+  }
+
+  // --- Keyboard ---
+  window.addEventListener("keydown", e => {
+    if (e.repeat) return;
+    switch (e.key.toLowerCase()) {
+      case "h": togglePanel(); break;
+      case "c": clearCanvas(); break;
+      case "s": saveImage(); break;
+      case " ": e.preventDefault(); toggleAuto(); break;
+    }
+  });
+
+  window.addEventListener("resize", resize);
+  // Recover if the page was laid out at 0×0 initially (e.g. embedded panes)
+  // and keep the canvas in sync with any container size changes.
+  if (window.ResizeObserver) {
+    let lastW = -1, lastH = -1;
+    new ResizeObserver(() => {
+      const w = document.documentElement.clientWidth;
+      const h = document.documentElement.clientHeight;
+      if (w && h && (w !== lastW || h !== lastH)) { lastW = w; lastH = h; resize(); }
+    }).observe(document.documentElement);
+  }
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
